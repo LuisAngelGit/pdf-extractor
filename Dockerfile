@@ -6,6 +6,7 @@ COPY pom.xml .
 RUN mvn -q -DskipTests dependency:go-offline
 COPY src ./src
 ENV MAVEN_OPTS="-Dfile.encoding=UTF-8"
+RUN mvn -e -X -DskipTests -Dmaven.test.skip=true resources:resources
 RUN mvn -q -DskipTests -Dmaven.test.skip=true package
 
 # ---------- runtime ----------
