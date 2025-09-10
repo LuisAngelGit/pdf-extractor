@@ -26,62 +26,58 @@ public class PdfController {
             @RequestPart("json") String json
     ) throws IOException {
 
-        // Convertir el JSON en lista de PageRequest
-        ObjectMapper mapper = new ObjectMapper();
+    	ObjectMapper mapper = new ObjectMapper();
         List<PageRequest> paginas = mapper.readValue(json, new TypeReference<List<PageRequest>>() {});
 
-        // Cargar el documento original
-        PDDocument documento = PDDocument.load(file.getInputStream());
+        // 2) Cerrar SIEMPRE el InputStream y el PDDocument
+        byte[] zipBytes;
+        try (InputStream in = file.getInputStream();
+             PDDocument documento = PDDocument.load(in);
+             ByteArrayOutputStream zipBaos = new ByteArrayOutputStream();
+             ZipOutputStream zipOut = new ZipOutputStream(zipBaos)) {
 
-        // Crear un buffer para el ZIP
-        ByteArrayOutputStream zipBaos = new ByteArrayOutputStream();
-        ZipOutputStream zipOut = new ZipOutputStream(zipBaos);
+            for (PageRequest request : paginas) {
+                String nombre = request.getNameDoc() + ".pdf";
+                String rango = request.getPag();
 
-        for (PageRequest request : paginas) {
-            String nombre = request.getNameDoc() + ".pdf";
-            String rango = request.getPag();
+                try (PDDocument nuevoDoc = new PDDocument();
+                     ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
 
-            // Crear un nuevo documento para estas páginas
-            PDDocument nuevoDoc = new PDDocument();
-
-            for (String parte : rango.split(",")) {
-                if (parte.contains("-")) {
-                    String[] limites = parte.split("-");
-                    int inicio = Integer.parseInt(limites[0]);
-                    int fin = Integer.parseInt(limites[1]);
-                    for (int i = inicio; i <= fin; i++) {
-                        int index = i - 1; // PDFBox es 0-based
-                        if (index >= 0 && index < documento.getNumberOfPages()) {
-                            PDPage page = documento.getPage(index);
-                            nuevoDoc.addPage(page);
+                    for (String parte : rango.split(",")) {
+                        if (parte.contains("-")) {
+                            String[] limites = parte.split("-");
+                            int inicio = Integer.parseInt(limites[0]);
+                            int fin = Integer.parseInt(limites[1]);
+                            for (int i = inicio; i <= fin; i++) {
+                                int index = i - 1;
+                                if (index >= 0 && index < documento.getNumberOfPages()) {
+                                    PDPage page = documento.getPage(index);
+                                    nuevoDoc.addPage(page); // si prefieres copiar, ver nota abajo
+                                }
+                            }
+                        } else {
+                            int pagina = Integer.parseInt(parte);
+                            int index = pagina - 1;
+                            if (index >= 0 && index < documento.getNumberOfPages()) {
+                                PDPage page = documento.getPage(index);
+                                nuevoDoc.addPage(page);
+                            }
                         }
                     }
-                } else {
-                    int pagina = Integer.parseInt(parte);
-                    int index = pagina - 1;
-                    if (index >= 0 && index < documento.getNumberOfPages()) {
-                        PDPage page = documento.getPage(index);
-                        nuevoDoc.addPage(page);
-                    }
+
+                    nuevoDoc.save(baos); // cierra estructuras internas de PDFBox
+                    // escribir entrada en el ZIP
+                    ZipEntry entry = new ZipEntry(nombre);
+                    zipOut.putNextEntry(entry);
+                    zipOut.write(baos.toByteArray());
+                    zipOut.closeEntry();
                 }
             }
 
-            // Guardar el documento en el ZIP
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            nuevoDoc.save(baos);
-            nuevoDoc.close();
-
-            ZipEntry entry = new ZipEntry(nombre);
-            zipOut.putNextEntry(entry);
-            zipOut.write(baos.toByteArray());
-            zipOut.closeEntry();
+            zipOut.finish(); // asegura el cierre del ZIP
+            zipBytes = zipBaos.toByteArray();
         }
 
-        documento.close();
-        zipOut.close();
-
-        // Devolver el ZIP como respuesta
-        byte[] zipBytes = zipBaos.toByteArray();
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=resultados.zip")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
